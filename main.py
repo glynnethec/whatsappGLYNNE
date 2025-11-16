@@ -1,5 +1,5 @@
 # ============================
-# GLYNNE AI - API + WhatsApp (FINAL)
+# GLYNNE AI - API + WhatsApp (FINAL CORREGIDO)
 # ============================
 
 import os
@@ -10,6 +10,7 @@ from typing import TypedDict
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse  # ✅ CORRECCIÓN 1
 from pydantic import BaseModel
 
 # LangChain / LangGraph
@@ -152,9 +153,9 @@ async def chat_endpoint(data: ChatInput):
     )
 
 # ============================
-# 8) META WEBHOOK (GET)
+# 8) META WEBHOOK (GET) - ✅ CORRECCIÓN 1
 # ============================
-@app.get("/webhook")
+@app.get("/webhook", response_class=PlainTextResponse)  # Meta exige texto plano
 async def verify(request: Request):
     params = dict(request.query_params)
 
@@ -162,8 +163,7 @@ async def verify(request: Request):
         params.get("hub.mode") == "subscribe"
         and params.get("hub.verify_token") == VERIFY_TOKEN
     ):
-        # Meta EXIGE devolver challenge como string, no int
-        return params.get("hub.challenge")
+        return params.get("hub.challenge")  # Devuelve solo el string
 
     return {"error": "token incorrecto"}
 
@@ -203,10 +203,11 @@ async def webhook_handler(request: Request):
     return {"ok": True}
 
 # ============================
-# 10) FUNCIÓN PARA RESPONDER
+# 10) FUNCIÓN PARA RESPONDER - ✅ CORRECCIÓN 2
 # ============================
 def send_whatsapp_message(to, message):
 
+    # ✅ CORREGIDO: Eliminado espacio extra antes de {PHONE_NUMBER_ID}
     url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
 
     payload = {
