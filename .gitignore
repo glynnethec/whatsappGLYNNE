@@ -1,0 +1,76 @@
+# =========================================
+# ARCHIVOS DE CONFIGURACIÓN SENSIBLE
+# =========================================
+.env
+*.env
+.env.*
+
+# =========================================
+# PYTHON BASICS
+# =========================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Compiled C extensions
+*.so
+
+# =========================================
+# ENTORNOS VIRTUALES
+# =========================================
+env/
+venv/
+ENV/
+.venv/
+
+# Poetry / Pipenv (por si lo usas)
+.poetry/
+.pipenv/
+Pipfile.lock
+
+# =========================================
+# ARCHIVOS DE LOGS Y DEBUG
+# =========================================
+*.log
+logs/
+debug.log
+
+# =========================================
+# CONFIGURACIONES DE EDITOR
+# =========================================
+.vscode/
+.idea/
+*.swp
+*~
+
+# =========================================
+# CACHE DE DEPENDENCIAS
+# =========================================
+.cache/
+.pytest_cache/
+.mypy_cache/
+pip-wheel-metadata/
+pip-log.txt
+
+# =========================================
+# CARPETAS DEL AGENTE / HISTORIAL
+# =========================================
+memory/
+user_sessions/
+*.json
+
+# Si guardas memoria temporal del agente
+*.db
+
+# =========================================
+# ARCHIVOS PARA DEPLOY EN DOCKER O CI/CD
+# =========================================
+docker-compose.override.yml
+*.pid
+*.seed
+
+# =========================================
+# ARCHIVOS DEL SISTEMA
+# =========================================
+.DS_Store
+Thumbs.db
