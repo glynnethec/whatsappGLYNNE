@@ -1,5 +1,5 @@
 # ============================
-# GLYNNE AI - API + WhatsApp
+# GLYNNE AI - API + WhatsApp (FINAL)
 # ============================
 
 import os
@@ -19,24 +19,14 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 
 # ============================
-# 1) VARIABLES DE ENTORNO
+# 1) VARIABLES
 # ============================
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "glynne_verify_token")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "glynne_verify")  # ESTE TOKEN VA EN META
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
-
-if not GROQ_API_KEY:
-    raise ValueError("❌ Falta GROQ_API_KEY en .env")
-
-if not WHATSAPP_TOKEN:
-    raise ValueError("❌ Falta WHATSAPP_TOKEN en .env")
-
-if not PHONE_NUMBER_ID:
-    raise ValueError("❌ Falta PHONE_NUMBER_ID en .env")
-
 
 # ============================
 # 2) LLM GROQ
@@ -62,8 +52,6 @@ Contexto previo: {historial}
 
 [ENTRADA]
 {mensaje}
-
-[RESPUESTA]
 """
 
 prompt = PromptTemplate(
@@ -72,19 +60,20 @@ prompt = PromptTemplate(
 )
 
 # ============================
-# 4) GESTIÓN DE MEMORIA
+# 4) MEMORIA POR USUARIO
 # ============================
 usuarios = {}
 
 def get_memory(user_id: str):
     if user_id not in usuarios:
         usuarios[user_id] = ConversationBufferMemory(
-            memory_key="historial", input_key="mensaje"
+            memory_key="historial",
+            input_key="mensaje"
         )
     return usuarios[user_id]
 
 # ============================
-# 5) ESTADO LANGGRAPH
+# 5) LANGGRAPH
 # ============================
 class State(TypedDict):
     mensaje: str
@@ -98,7 +87,9 @@ def agente_node(state: State) -> State:
     historial = memory.load_memory_variables({}).get("historial", "")
 
     final_prompt = prompt.format(
-        rol=state["rol"], mensaje=state["mensaje"], historial=historial
+        rol=state["rol"],
+        mensaje=state["mensaje"],
+        historial=historial
     )
 
     respuesta = llm.invoke(final_prompt).content
@@ -117,7 +108,7 @@ workflow.add_edge("agente", END)
 agente_graph = workflow.compile()
 
 # ============================
-# 6) FASTAPI UNIFICADA
+# 6) FASTAPI
 # ============================
 app = FastAPI(title="GLYNNE AI – Unified Backend")
 
@@ -126,11 +117,10 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
 
 # ============================
-# 7) API /chat para Next.js
+# 7) API /chat
 # ============================
 class ChatInput(BaseModel):
     mensaje: str
@@ -141,7 +131,7 @@ class ChatOutput(BaseModel):
     user_id: str
     respuesta: str
 
-@app.post("/chat", response_model=ChatOutput)
+@app.post("/chat")
 async def chat_endpoint(data: ChatInput):
 
     user_id = data.user_id or str(random.randint(10000, 99999))
@@ -162,7 +152,7 @@ async def chat_endpoint(data: ChatInput):
     )
 
 # ============================
-# 8) VERIFICACIÓN DE WEBHOOK
+# 8) META WEBHOOK (GET)
 # ============================
 @app.get("/webhook")
 async def verify(request: Request):
@@ -172,7 +162,8 @@ async def verify(request: Request):
         params.get("hub.mode") == "subscribe"
         and params.get("hub.verify_token") == VERIFY_TOKEN
     ):
-        return int(params["hub.challenge"])
+        # Meta EXIGE devolver challenge como string, no int
+        return params.get("hub.challenge")
 
     return {"error": "token incorrecto"}
 
@@ -189,9 +180,9 @@ async def webhook_handler(request: Request):
         value = changes["value"]
 
         if "messages" in value:
-            message = value["messages"][0]
-            sender = message["from"]
-            text = message.get("text", {}).get("body", "")
+            msg = value["messages"][0]
+            sender = msg["from"]
+            text = msg.get("text", {}).get("body", "")
 
             estado = {
                 "mensaje": text,
@@ -207,12 +198,12 @@ async def webhook_handler(request: Request):
             send_whatsapp_message(sender, respuesta)
 
     except Exception as e:
-        print("❌ Error procesando WhatsApp:", e)
+        print("❌ Error:", e)
 
     return {"ok": True}
 
 # ============================
-# 10) ENVIAR MENSAJES WHATSAPP
+# 10) FUNCIÓN PARA RESPONDER
 # ============================
 def send_whatsapp_message(to, message):
 
@@ -236,7 +227,7 @@ def send_whatsapp_message(to, message):
 
 
 # ============================
-# RUN LOCAL
+# LOCAL RUN
 # ============================
 if __name__ == "__main__":
     import uvicorn
