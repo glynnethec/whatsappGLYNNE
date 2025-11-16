@@ -1,47 +1,149 @@
-# main.py
+# ============================
+# GLYNNE AI - API + WhatsApp
+# ============================
+
+import os
 import random
-from fastapi import FastAPI
+import requests
+from dotenv import load_dotenv
+from typing import TypedDict
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Importar TODO desde tu componente original sin modificarlo
-from agent.chat import app as agente_graph, roles, get_memory
+# LangChain / LangGraph
+from langgraph.graph import StateGraph, END
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+from langchain.memory import ConversationBufferMemory
 
-# ========================================================
-# FastAPI
-# ========================================================
-app_api = FastAPI(title="GLYNNE AI - API")
+# ============================
+# 1) VARIABLES DE ENTORNO
+# ============================
+load_dotenv()
 
-# CORS para que el front en Next.js pueda consumirlo
-app_api.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "glynne_verify_token")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
+
+if not GROQ_API_KEY:
+    raise ValueError("❌ Falta GROQ_API_KEY en .env")
+
+if not WHATSAPP_TOKEN:
+    raise ValueError("❌ Falta WHATSAPP_TOKEN en .env")
+
+if not PHONE_NUMBER_ID:
+    raise ValueError("❌ Falta PHONE_NUMBER_ID en .env")
+
+
+# ============================
+# 2) LLM GROQ
+# ============================
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=GROQ_API_KEY,
+    temperature=0.4,
 )
 
-# ========================================================
-# Modelos
-# ========================================================
+# ============================
+# 3) PROMPT
+# ============================
+Prompt_estructura = """
+[META]
+Tu meta es analizar el negocio del usuario y generar diagnósticos de IA como un {rol} profesional.
+
+[RESPUESTA]
+Máximo 100 palabras. Profesional. Sin saludos. No inventes datos.
+
+[MEMORIA]
+Contexto previo: {historial}
+
+[ENTRADA]
+{mensaje}
+
+[RESPUESTA]
+"""
+
+prompt = PromptTemplate(
+    input_variables=["rol", "mensaje", "historial"],
+    template=Prompt_estructura.strip(),
+)
+
+# ============================
+# 4) GESTIÓN DE MEMORIA
+# ============================
+usuarios = {}
+
+def get_memory(user_id: str):
+    if user_id not in usuarios:
+        usuarios[user_id] = ConversationBufferMemory(
+            memory_key="historial", input_key="mensaje"
+        )
+    return usuarios[user_id]
+
+# ============================
+# 5) ESTADO LANGGRAPH
+# ============================
+class State(TypedDict):
+    mensaje: str
+    rol: str
+    historial: str
+    respuesta: str
+    user_id: str
+
+def agente_node(state: State) -> State:
+    memory = get_memory(state["user_id"])
+    historial = memory.load_memory_variables({}).get("historial", "")
+
+    final_prompt = prompt.format(
+        rol=state["rol"], mensaje=state["mensaje"], historial=historial
+    )
+
+    respuesta = llm.invoke(final_prompt).content
+
+    memory.save_context({"mensaje": state["mensaje"]}, {"respuesta": respuesta})
+
+    state["respuesta"] = respuesta
+    state["historial"] = historial
+    return state
+
+workflow = StateGraph(State)
+workflow.add_node("agente", agente_node)
+workflow.set_entry_point("agente")
+workflow.add_edge("agente", END)
+
+agente_graph = workflow.compile()
+
+# ============================
+# 6) FASTAPI UNIFICADA
+# ============================
+app = FastAPI(title="GLYNNE AI – Unified Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
+
+# ============================
+# 7) API /chat para Next.js
+# ============================
 class ChatInput(BaseModel):
     mensaje: str
     rol: str = "auditor"
     user_id: str | None = None
 
-
 class ChatOutput(BaseModel):
     user_id: str
     respuesta: str
 
+@app.post("/chat", response_model=ChatOutput)
+async def chat_endpoint(data: ChatInput):
 
-# ========================================================
-# Endpoint principal
-# ========================================================
-@app_api.post("/chat", response_model=ChatOutput)
-async def chat(data: ChatInput):
-
-    # user_id dinámico si no lo envían
     user_id = data.user_id or str(random.randint(10000, 99999))
 
     estado = {
@@ -56,14 +158,86 @@ async def chat(data: ChatInput):
 
     return ChatOutput(
         user_id=user_id,
-        respuesta=result["respuesta"],
+        respuesta=result["respuesta"]
     )
 
+# ============================
+# 8) VERIFICACIÓN DE WEBHOOK
+# ============================
+@app.get("/webhook")
+async def verify(request: Request):
+    params = dict(request.query_params)
 
-# ========================================================
-# Para correrlo con: uvicorn main:app_api --reload
-# ========================================================
+    if (
+        params.get("hub.mode") == "subscribe"
+        and params.get("hub.verify_token") == VERIFY_TOKEN
+    ):
+        return int(params["hub.challenge"])
+
+    return {"error": "token incorrecto"}
+
+# ============================
+# 9) RECIBIR MENSAJES WHATSAPP
+# ============================
+@app.post("/webhook")
+async def webhook_handler(request: Request):
+    body = await request.json()
+
+    try:
+        entry = body["entry"][0]
+        changes = entry["changes"][0]
+        value = changes["value"]
+
+        if "messages" in value:
+            message = value["messages"][0]
+            sender = message["from"]
+            text = message.get("text", {}).get("body", "")
+
+            estado = {
+                "mensaje": text,
+                "rol": "auditor",
+                "user_id": sender,
+                "historial": "",
+                "respuesta": "",
+            }
+
+            result = agente_graph.invoke(estado)
+            respuesta = result["respuesta"]
+
+            send_whatsapp_message(sender, respuesta)
+
+    except Exception as e:
+        print("❌ Error procesando WhatsApp:", e)
+
+    return {"ok": True}
+
+# ============================
+# 10) ENVIAR MENSAJES WHATSAPP
+# ============================
+def send_whatsapp_message(to, message):
+
+    url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": message},
+    }
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    r = requests.post(url, json=payload, headers=headers)
+    print("📤 Enviado:", r.json())
+    return r.json()
+
+
+# ============================
+# RUN LOCAL
+# ============================
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 API lista en http://localhost:8000/chat")
-    uvicorn.run("main:app_api", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
