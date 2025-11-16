@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Importar TODO desde tu componente original sin modificarlo
-from agente import app as agente_graph, roles, get_memory
+from agent.chat import app as agente_graph, roles, get_memory
 
 # ========================================================
 # FastAPI
